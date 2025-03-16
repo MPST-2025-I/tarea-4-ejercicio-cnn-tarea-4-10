@@ -101,19 +101,6 @@ class MelanieSolution:
         self.evaluate(model=self.cm)
         return self
 
-
-# Cargar el dataset
-df = pd.read_csv("Housing.csv")
-
-# Crear una instancia de la clase
-model = MelanieSolution()
-
-# Ejecutar el pipeline paso a paso
-model.run_pipeline(df)
-
-
-
-
 class MelanieSolution2:
     def __init__(self):
         self.X_train = None
@@ -371,13 +358,3 @@ class MelanieSolution2:
         self.print_summary()  # Resumen final
         return self
 
-
-
-# Ruta de la carpeta que contiene los archivos CSV
-folder_path = 'archive'
-
-# Crear una instancia de la clase
-model = MelanieSolution2()
-
-# Ejecutar el pipeline paso a paso
-model.run_pipeline(folder_path, target_column='TOTALDEMAND', n_steps_in=24, n_steps_out=2)

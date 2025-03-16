@@ -243,52 +243,84 @@ class PatricioSolution1:
         print("\nAll models completed!")
         return self
 
+import os
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+from tensorflow import keras
+from tensorflow.keras.models import Sequential, Model
+from tensorflow.keras.layers import Input, Conv1D, MaxPooling1D, Flatten, Dense, Dropout, Bidirectional, LSTM, concatenate
+from sklearn.metrics import r2_score
+
 class PatricioSolution2:
     def __init__(self):
         """
-        Initialize the PatricioSolution2 class with default values.
+        Initialize the class with default values
         """
+        # Datos y configuraciones generales
         self.n_steps = None
         self.n_features = None
         self.X = None
         self.y = None
 
-        self.ucnn = None
+        # Modelos y sus historiales
+        self.ucnn = None                   
         self.history_ucnn = None
 
-        self.df2 = None
-        self.df3 = None  
-        self.dataset = None
-
-        self.mcnn = None
+        self.df2 = None                     
+        self.df3 = None                     
+        self.dataset = None                 
+        
+        self.mcnn = None                    
         self.history_mcnn = None
 
-        self.mhcnn = None
+        self.mhcnn = None                   
         self.history_mhcnn = None
 
-        self.X_m = None
+        self.X_m = None                   
         self.y_m = None
 
-        self.mpcnn = None
+        self.mpcnn = None                   
         self.history_mpcnn = None
         
-        self.mscnn = None
-        self.history_mscnn = None
-        
-        self.mocnn = None
+        self.mocnn = None                   
         self.history_mocnn = None
+
+        self.mscnn = None                   
+        self.history_mscnn = None
+
+        self.ucnn_dropout = None            
+        self.history_ucnn_dropout = None
+        
+        self.ucnn_bidirectional = None      
+        self.history_ucnn_bidirectional = None
+        
+        self.ulstm = None                   
+        self.history_ulstm = None
+        
+        self.udense = None                  
+        self.history_udense = None
+        
+        self.ucnn_stack = None              
+        self.history_ucnn_stack = None
+        
+        self.ucnn_ensemble = None           
+        self.history_ucnn_ensemble = {}     
 
     def plot(self, df, title='Demand per Day', ylabel='Total Demand'):
         """
-        Plot time series data.
-        
+        Graph a time series.
+
         Parameters:
-        df : pandas.Series
-            The time series data to plot.
-        title : str
-            The title of the plot.
-        ylabel : str
-            The label for y-axis.
+        df : pandas.DataFrame
+            The time series data.
+            
+        title : str, optional
+            The title of the plot. Defaults to 'Demand per Day'.
+            
+        ylabel : str, optional
+            The label for the y-axis. Defaults to 'Total Demand'.
         """
         plt.figure(figsize=(10, 5))
         plt.plot(df.index, df, marker='o', linestyle='-')
@@ -300,121 +332,145 @@ class PatricioSolution2:
         plt.tight_layout()
         plt.show()
 
+    def plot_real_vs_predicted(self, X, y, model, model_name="Model"):
+        """
+        Graph the real series against the model predictions.
+        
+        Parameters:
+        X : array-like
+            The input data.
+            
+        y : array-like
+            The target values.
+            
+        model : keras model
+            The model to evaluate.
+            
+        model_name : str, optional
+            The name of the model. Defaults to 'Model'.
+        """
+        y_pred = model.predict(X).flatten()
+        plt.figure(figsize=(10, 5))
+        plt.plot(y, label='Real')
+        plt.plot(y_pred, label='Prediction')
+        plt.title(f"{model_name}: Real vs Predicho")
+        plt.xlabel("Ejemplo")
+        plt.ylabel("Valor")
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
     def preprocessing(self, path):
         """
-        Preprocess electricity data from multiple CSV files.
+        Preprocess electric data from multiple CSV files.
         
         Parameters:
         path : str
-            The path to the directory containing CSV files.
-            
-        Returns:
-        self : PatricioSolution2
-            Returns the instance for method chaining.
+            The path to the directory containing the CSV files.
         """
-        # Load and concatenate all CSV files in the directory
         csv_files = [f for f in os.listdir(path) if f.endswith('.csv')]
         df_list = []
-        
         for file in csv_files:
             try:
                 temp_df = pd.read_csv(os.path.join(path, file))
-                # Ensure SETTLEMENTDATE is treated as a datetime
                 if 'SETTLEMENTDATE' in temp_df.columns:
                     temp_df['SETTLEMENTDATE'] = pd.to_datetime(temp_df['SETTLEMENTDATE'])
                 df_list.append(temp_df)
             except Exception as e:
                 print(f"Error loading file {file}: {e}")
-        
         if not df_list:
             raise ValueError(f"No valid CSV files found in {path}")
-            
         df = pd.concat(df_list, ignore_index=True)
-        
-        # Ensure SETTLEMENTDATE is set as the index and is datetime type
         if 'SETTLEMENTDATE' in df.columns:
             df.set_index('SETTLEMENTDATE', inplace=True)
         else:
             raise ValueError("SETTLEMENTDATE column not found in the dataset")
-            
-        # Filter data from 2021 onwards
         df = df[df.index >= '2021-01-01']
-        
-        # Resample to daily frequency
         if 'TOTALDEMAND' in df.columns:
             df2 = df['TOTALDEMAND'].resample('1D').mean()
             self.df2 = df2
             self.plot(df2)
         else:
             raise ValueError("TOTALDEMAND column not found in the dataset")
-            
-        # Store RRP data for multivariate analysis if available
         if 'RRP' in df.columns:
             self.df3 = df['RRP'].resample('1D').mean()
-        
         return self
 
     @staticmethod
     def split_univariate_sequence(sequence, n_steps):
         """
-        Split a univariate sequence into samples with a fixed window size.
+        Splits a univariate sequence into windows of size n_steps.
         
         Parameters:
         sequence : array-like
-            The input time series data.
+            The sequence to split.
+            
         n_steps : int
-            The window size.
+            The size of each window.
             
         Returns:
-        tuple
-            X (input sequences) and y (target values).
+        X : numpy.ndarray
+            The input data.
+            
+        y : numpy.ndarray
+            The target values.
         """
         X, y = [], []
         for i in range(len(sequence)):
             end_ix = i + n_steps
-            
             if end_ix > len(sequence) - 1:
-                break         
+                break
             if isinstance(sequence, pd.Series):
                 seq_x, seq_y = sequence.iloc[i:end_ix], sequence.iloc[end_ix]
             else:
                 seq_x, seq_y = sequence[i:end_ix], sequence[end_ix]
-
             X.append(seq_x)
             y.append(seq_y)
-        
         return np.array(X), np.array(y)
 
     def set_features(self, n_steps=4, n_features=1):
         """
-        Set the features for the model and prepare the data.
+        Prepare features for the univariate model.
         
         Parameters:
-        n_steps : int
-            The window size for the sequence.
-        n_features : int
-            The number of features in the data.
+        n_steps : int, optional
+            The number of time steps to use for the model. Defaults to 4.
             
-        Returns:
-        self : PatricioSolution2
-            Returns the instance for method chaining.
+        n_features : int, optional
+            The number of features to use for the model. Defaults to 1.
         """
         self.n_steps = n_steps
         self.n_features = n_features
-        
         if self.df2 is None:
             raise ValueError("Data not preprocessed. Call preprocessing() first.")
-            
         self.X, self.y = self.split_univariate_sequence(self.df2, self.n_steps)
-        
-        # Reshape input to be [samples, time steps, features]
         self.X = self.X.reshape((self.X.shape[0], self.X.shape[1], self.n_features))
+        return self
+
+    def evaluate(self, model=None):
+        """
+        Evaluate a model (predict and show R² or MSE) and graph real vs predicted.
         
+        Parameters:
+        model : keras model, optional
+            The model to evaluate. If None, uses self.ucnn by default.
+        """
+        model_to_evaluate = model if model is not None else self.ucnn
+        if model_to_evaluate is None:
+            raise ValueError("No model available for evaluation")
+        # Evaluación para modelos de entrada única
+        if hasattr(self, 'X') and self.X is not None and hasattr(self, 'y') and self.y is not None:
+            y_pred = model_to_evaluate.predict(self.X).flatten()
+            r2 = r2_score(self.y, y_pred)
+            print(f'R² Score: {r2:.4f}')
+            self.plot_real_vs_predicted(self.X, self.y, model_to_evaluate, model_name=model_to_evaluate.name)
+        else:
+            print("Warning: No data available for evaluation")
         return self
 
     def univariate_cnn(self):
         """
-        Build and train a univariate CNN model.
+        Univariate CNN model.
         
         Returns:
         self : PatricioSolution2
@@ -422,78 +478,382 @@ class PatricioSolution2:
         """
         if self.X is None or self.y is None:
             raise ValueError("Features not set. Call set_features() first.")
-            
-        ucnn = Sequential()
-        ucnn.add(keras.layers.Input(shape=(self.n_steps, self.n_features)))
-        ucnn.add(Conv1D(64, 2, activation='relu'))
-        ucnn.add(MaxPooling1D())
-        ucnn.add(Flatten())
-        ucnn.add(Dense(50, activation='relu'))
-        ucnn.add(Dense(1))
-        ucnn.compile(optimizer='adam', loss='mse')
-
-        history_ucnn = ucnn.fit(self.X, self.y, epochs=1000, verbose=0)
-        pd.DataFrame(history_ucnn.history).plot(title='Univariate CNN Training Loss')
+        model = Sequential(name="Univariate_CNN")
+        model.add(keras.layers.Input(shape=(self.n_steps, self.n_features)))
+        model.add(Conv1D(64, 2, activation='relu'))
+        model.add(MaxPooling1D())
+        model.add(Flatten())
+        model.add(Dense(50, activation='relu'))
+        model.add(Dense(1))
+        model.compile(optimizer='adam', loss='mse')
+        history = model.fit(self.X, self.y, epochs=1000, verbose=0)
+        pd.DataFrame(history.history).plot(title='Univariate CNN Training Loss')
         plt.grid(True)
         plt.show()
-
-        self.ucnn = ucnn
-        self.history_ucnn = history_ucnn
-        
-        # Evaluate the model
-        self.evaluate(model=self.ucnn)
-
+        self.ucnn = model
+        self.history_ucnn = history
+        self.evaluate(model=model)
         return self
 
-    def evaluate(self, model=None):
+    def multivariate_cnn(self):
         """
-        Evaluate a model on the test data.
+        Multivariate CNN model.
         
-        Parameters:
-        model : keras model, optional
-            The model to evaluate. If None, uses self.ucnn by default.
-            
         Returns:
         self : PatricioSolution2
             Returns the instance for method chaining.
         """
-        # Use the provided model or default to the univariate CNN model
-        model_to_evaluate = model if model is not None else self.ucnn
-        
-        if model_to_evaluate is None:
-            raise ValueError("No model available for evaluation")
-            
-        # Check if we're evaluating a model with multiple inputs
-        if isinstance(model_to_evaluate, keras.models.Model) and len(model_to_evaluate.inputs) > 1:
-            # For models like multiple header CNN that have multiple inputs
-            if hasattr(self, 'X') and self.X is not None:
-                X1 = self.X[:, :, 0].reshape(self.X.shape[0], self.X.shape[1], 1)
-                X2 = self.X[:, :, 1].reshape(self.X.shape[0], self.X.shape[1], 1) if self.X.shape[2] > 1 else X1
-                y_pred = model_to_evaluate.predict([X1, X2]).flatten()
-                r2 = r2_score(self.y, y_pred)
-                print(f'R² Score: {r2:.4f}')
-            else:
-                print("Warning: Cannot evaluate model with multiple inputs without proper data")
-        elif hasattr(self, 'X_m') and model_to_evaluate == self.mpcnn:
-            # For multiple parallel CNN
-            y_pred = model_to_evaluate.predict(self.X_m)
-            mse = np.mean((self.y_m - y_pred) ** 2)
-            print(f'MSE: {mse:.4f}')
-        else:
-            # Standard evaluation for single input models
-            if hasattr(self, 'X') and self.X is not None and hasattr(self, 'y') and self.y is not None:
-                # Make predictions and evaluate
-                y_pred = model_to_evaluate.predict(self.X).flatten()
-                r2 = r2_score(self.y, y_pred)
-                print(f'R² Score: {r2:.4f}')
-            else:
-                print("Warning: No data available for evaluation")
-
+        if self.dataset is None:
+            self.multivariate_cnn_preprocess()
+        X, y = self.split_multivariate_sequence(self.dataset, self.n_steps)
+        n_features = X.shape[2]
+        model = Sequential(name="Multivariate_CNN")
+        model.add(keras.layers.Input(shape=(self.n_steps, n_features)))
+        model.add(Conv1D(64, 2, activation='relu'))
+        model.add(MaxPooling1D())
+        model.add(Flatten())
+        model.add(Dense(50, activation='relu'))
+        model.add(Dense(1))
+        model.compile(optimizer='adam', loss='mse')
+        history = model.fit(X, y, epochs=1000, verbose=0)
+        pd.DataFrame(history.history).plot(title='Multivariate CNN Training Loss')
+        plt.grid(True)
+        plt.show()
+        self.mcnn = model
+        self.history_mcnn = history
+        # Guarda X e y para evaluación
+        self.X, self.y = X, y
+        self.evaluate(model=model)
         return self
+
+    def multiple_header(self):
+        """
+        Multiple Header CNN (multi-input) model.
+        
+        Returns:
+        self : PatricioSolution2
+            Returns the instance for method chaining.
+        """
+        if self.dataset is None:
+            self.multivariate_cnn_preprocess()
+        X, y = self.split_multivariate_sequence(self.dataset, self.n_steps)
+        n_steps_local = X.shape[1]
+        n_features_local = X.shape[2]
+        self.n_steps = n_steps_local
+        self.n_features = n_features_local
+        input1 = Input(shape=(n_steps_local, 1))
+        cnn1 = Conv1D(64, 2, activation='relu')(input1)
+        cnn1 = MaxPooling1D()(cnn1)
+        cnn1 = Flatten()(cnn1)
+        input2 = Input(shape=(n_steps_local, 1))
+        cnn2 = Conv1D(64, 2, activation='relu')(input2)
+        cnn2 = MaxPooling1D()(cnn2)
+        cnn2 = Flatten()(cnn2)
+        merged = concatenate([cnn1, cnn2])
+        dense = Dense(50, activation='relu')(merged)
+        output = Dense(1)(dense)
+        model = Model(inputs=[input1, input2], outputs=output, name="Multiple_Header_CNN")
+        model.compile(optimizer='adam', loss='mse')
+        X1 = X[:, :, 0].reshape(X.shape[0], n_steps_local, 1)
+        X2 = X[:, :, 1].reshape(X.shape[0], n_steps_local, 1)
+        history = model.fit([X1, X2], y, epochs=1000, verbose=0)
+        pd.DataFrame(history.history).plot(title='Multiple Header CNN Training Loss')
+        plt.grid(True)
+        plt.show()
+        self.mhcnn = model
+        self.history_mhcnn = history
+        self.X, self.y = X, y
+        loss = model.evaluate([X1, X2], y)
+        print(f'Loss: {loss:.4f}')
+        return self
+
+    def multiple_parallel(self):
+        """
+        Multiple Parallel CNN model.
+        
+        Returns:
+        self : PatricioSolution2
+            Returns the instance for method chaining.
+        """
+        if self.dataset is None:
+            self.multivariate_cnn_preprocess()
+        X_m, y_m = self.split_multiple_forecasting_sequence(self.dataset, n_steps=4)
+        self.X_m, self.y_m = X_m, y_m
+        n_features_local = X_m.shape[2]
+        model = Sequential(name="Multiple_Parallel_CNN")
+        model.add(keras.layers.Input(shape=(self.n_steps, n_features_local)))
+        model.add(Conv1D(64, 2, activation='relu'))
+        model.add(MaxPooling1D())
+        model.add(Flatten())
+        model.add(Dense(50, activation='relu'))
+        model.add(Dense(n_features_local))
+        model.compile(optimizer='adam', loss='mse')
+        history = model.fit(X_m, y_m, epochs=1000, verbose=0)
+        pd.DataFrame(history.history).plot(title='Multiple Parallel CNN Training Loss')
+        plt.grid(True)
+        plt.show()
+        self.mpcnn = model
+        self.history_mpcnn = history
+        loss = model.evaluate(X_m, y_m)
+        print(f'Loss: {loss:.4f}')
+        return self
+
+    def multi_output_cnn(self):
+        """
+        Multi-Output CNN model.
+        
+        Returns:
+        self : PatricioSolution2
+            Returns the instance for method chaining.
+        """
+        if self.X_m is None or self.y_m is None:
+            if self.dataset is None:
+                self.multivariate_cnn_preprocess()
+            self.X_m, self.y_m = self.split_multiple_forecasting_sequence(self.dataset, n_steps=4)
+        n_features_local = self.X_m.shape[2]
+        visible = Input(shape=(self.n_steps, n_features_local))
+        cnn = Conv1D(64, 2, activation='relu')(visible)
+        cnn = MaxPooling1D()(cnn)
+        cnn = Flatten()(cnn)
+        cnn = Dense(50, activation='relu')(cnn)
+        output1 = Dense(1)(cnn)
+        output2 = Dense(1)(cnn)
+        output3 = Dense(1)(cnn)
+        model = Model(inputs=visible, outputs=[output1, output2, output3], name="Multi_Output_CNN")
+        model.compile(optimizer='adam', loss='mse')
+        y1 = self.y_m[:, 0].reshape((self.y_m.shape[0], 1))
+        y2 = self.y_m[:, 1].reshape((self.y_m.shape[0], 1))
+        y3 = self.y_m[:, 2].reshape((self.y_m.shape[0], 1))
+        history = model.fit(self.X_m, [y1, y2, y3], epochs=1000, verbose=0)
+        pd.DataFrame(history.history).plot(title='Multi-Output CNN Training Loss')
+        plt.grid(True)
+        plt.show()
+        self.mocnn = model
+        self.history_mocnn = history
+        loss = model.evaluate(self.X_m, [y1, y2, y3])
+        print(f'Loss: {loss}')
+        return self
+
+    def multiple_steps_cnn(self):
+        """
+        Multiple Steps CNN model.
+        
+        Returns:
+        self : PatricioSolution2
+            Returns the instance for method chaining.
+        """
+        if self.df2 is None:
+            raise ValueError("Data not preprocessed. Call preprocessing() first.")
+        X, y = self.split_univariate_sequence_m_step(self.df2, 4, 2)
+        for i in range(min(3, len(X))):
+            print(f"Input {i}: {X[i]}, Output {i}: {y[i]}")
+        X = X.reshape((X.shape[0], X.shape[1], 1))
+        model = Sequential(name="Multiple_Steps_CNN")
+        model.add(keras.layers.Input(shape=(4, 1)))
+        model.add(Conv1D(64, 2, activation='relu'))
+        model.add(MaxPooling1D())
+        model.add(Flatten())
+        model.add(Dense(50, activation='relu'))
+        model.add(Dense(2))
+        model.compile(optimizer='adam', loss='mse')
+        history = model.fit(X, y, epochs=1000, verbose=0)
+        pd.DataFrame(history.history).plot(title='Multiple Steps CNN Training Loss')
+        plt.grid(True)
+        plt.show()
+        self.mscnn = model
+        self.history_mscnn = history
+        loss = model.evaluate(X, y)
+        print(f'Loss: {loss:.4f}')
+        return self
+
+    def univariate_cnn_dropout(self):
+        """
+        Univariate CNN with Dropout model.
+        
+        Returns:
+        self : PatricioSolution2
+            Returns the instance for method chaining.
+        """
+        if self.X is None or self.y is None:
+            raise ValueError("Features not set. Call set_features() first.")
+        model = Sequential(name="Univariate_CNN_Dropout")
+        model.add(keras.layers.Input(shape=(self.n_steps, self.n_features)))
+        model.add(Conv1D(64, 2, activation='relu'))
+        model.add(Dropout(0.2))
+        model.add(MaxPooling1D())
+        model.add(Flatten())
+        model.add(Dense(50, activation='relu'))
+        model.add(Dense(1))
+        model.compile(optimizer='adam', loss='mse')
+        history = model.fit(self.X, self.y, epochs=1000, verbose=0)
+        pd.DataFrame(history.history).plot(title='Univariate CNN Dropout Training Loss')
+        plt.grid(True)
+        plt.show()
+        self.ucnn_dropout = model
+        self.history_ucnn_dropout = history
+        self.evaluate(model=model)
+        return self
+
+    def univariate_cnn_bidirectional(self):
+        """
+        Univariate CNN with Bidirectional LSTM model.
+        
+        Returns:
+        self : PatricioSolution2
+            Returns the instance for method chaining.
+        """
+        if self.X is None or self.y is None:
+            raise ValueError("Features not set. Call set_features() first.")
+        model = Sequential(name="Univariate_CNN_Bidirectional")
+        model.add(keras.layers.Input(shape=(self.n_steps, self.n_features)))
+        model.add(Conv1D(64, 2, activation='relu'))
+        model.add(MaxPooling1D())
+        model.add(Bidirectional(LSTM(50)))
+        model.add(Dense(1))
+        model.compile(optimizer='adam', loss='mse')
+        history = model.fit(self.X, self.y, epochs=1000, verbose=0)
+        pd.DataFrame(history.history).plot(title='Univariate CNN Bidirectional Training Loss')
+        plt.grid(True)
+        plt.show()
+        self.ucnn_bidirectional = model
+        self.history_ucnn_bidirectional = history
+        self.evaluate(model=model)
+        return self
+
+    def univariate_lstm(self):
+        """
+        Univariate LSTM model.
+        
+        Returns:
+        self : PatricioSolution2
+            Returns the instance for method chaining.
+        """
+        if self.X is None or self.y is None:
+            raise ValueError("Features not set. Call set_features() first.")
+        model = Sequential(name="Univariate_LSTM")
+        model.add(keras.layers.Input(shape=(self.n_steps, self.n_features)))
+        model.add(LSTM(50))
+        model.add(Dense(1))
+        model.compile(optimizer='adam', loss='mse')
+        history = model.fit(self.X, self.y, epochs=1000, verbose=0)
+        pd.DataFrame(history.history).plot(title='Univariate LSTM Training Loss')
+        plt.grid(True)
+        plt.show()
+        self.ulstm = model
+        self.history_ulstm = history
+        self.evaluate(model=model)
+        return self
+
+    def univariate_dense(self):
+        """
+        Univariate Dense model.
+        
+        Returns:
+        self : PatricioSolution2
+            Returns the instance for method chaining.
+        """
+        if self.X is None or self.y is None:
+            raise ValueError("Features not set. Call set_features() first.")
+        model = Sequential(name="Univariate_Dense")
+        model.add(keras.layers.Input(shape=(self.n_steps, self.n_features)))
+        model.add(Flatten())
+        model.add(Dense(50, activation='relu'))
+        model.add(Dense(1))
+        model.compile(optimizer='adam', loss='mse')
+        history = model.fit(self.X, self.y, epochs=1000, verbose=0)
+        pd.DataFrame(history.history).plot(title='Univariate Dense Training Loss')
+        plt.grid(True)
+        plt.show()
+        self.udense = model
+        self.history_udense = history
+        self.evaluate(model=model)
+        return self
+
+    def univariate_cnn_stack(self):
+        """
+        Stacked Univariate CNN (dos capas Conv1D) model.
+        
+        Returns:
+        self : PatricioSolution2
+            Returns the instance for method chaining.
+        """
+        if self.X is None or self.y is None:
+            raise ValueError("Features not set. Call set_features() first.")
+        model = Sequential(name="Univariate_CNN_Stack")
+        model.add(keras.layers.Input(shape=(self.n_steps, self.n_features)))
+        model.add(Conv1D(64, 2, activation='relu'))
+        model.add(Conv1D(64, 2, activation='relu'))
+        model.add(MaxPooling1D())
+        model.add(Flatten())
+        model.add(Dense(50, activation='relu'))
+        model.add(Dense(1))
+        model.compile(optimizer='adam', loss='mse')
+        history = model.fit(self.X, self.y, epochs=1000, verbose=0)
+        pd.DataFrame(history.history).plot(title='Stacked Univariate CNN Training Loss')
+        plt.grid(True)
+        plt.show()
+        self.ucnn_stack = model
+        self.history_ucnn_stack = history
+        self.evaluate(model=model)
+        return self
+
+    def univariate_cnn_ensemble(self):
+        """
+        Ensamble de dos modelos univariados (Univariate_CNN y Univariate_CNN_Dropout).        
+        Returns:
+        self : PatricioSolution2
+            Returns the instance for method chaining.
+        """
+        if self.X is None or self.y is None:
+            raise ValueError("Features not set. Call set_features() first.")
+
+        model1 = Sequential(name="Ensemble_Model_1")
+        model1.add(keras.layers.Input(shape=(self.n_steps, self.n_features)))
+        model1.add(Conv1D(64, 2, activation='relu'))
+        model1.add(MaxPooling1D())
+        model1.add(Flatten())
+        model1.add(Dense(50, activation='relu'))
+        model1.add(Dense(1))
+        model1.compile(optimizer='adam', loss='mse')
+        history1 = model1.fit(self.X, self.y, epochs=1000, verbose=0)
+
+        model2 = Sequential(name="Ensemble_Model_2")
+        model2.add(keras.layers.Input(shape=(self.n_steps, self.n_features)))
+        model2.add(Conv1D(64, 2, activation='relu'))
+        model2.add(Dropout(0.2))
+        model2.add(MaxPooling1D())
+        model2.add(Flatten())
+        model2.add(Dense(50, activation='relu'))
+        model2.add(Dense(1))
+        model2.compile(optimizer='adam', loss='mse')
+        history2 = model2.fit(self.X, self.y, epochs=1000, verbose=0)
+
+        self.history_ucnn_ensemble = {"model1": history1, "model2": history2}
+
+        def ensemble_predict(X_input):
+            pred1 = model1.predict(X_input).flatten()
+            pred2 = model2.predict(X_input).flatten()
+            return (pred1 + pred2) / 2.0
+
+        y_pred = ensemble_predict(self.X)
+        r2 = r2_score(self.y, y_pred)
+        print(f'Ensemble Model R² Score: {r2:.4f}')
+        plt.figure(figsize=(10, 5))
+        plt.plot(self.y, label='Real')
+        plt.plot(y_pred, label='Predicción Ensamble')
+        plt.title("Ensemble: Real vs Predicho")
+        plt.xlabel("Ejemplo")
+        plt.ylabel("Valor")
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+        self.ucnn_ensemble = ensemble_predict
+        return self
+
 
     def multivariate_cnn_preprocess(self):
         """
-        Preprocess data for multivariate CNN.
+        Preprocess data for multivariate analysis.
         
         Returns:
         self : PatricioSolution2
@@ -501,38 +861,25 @@ class PatricioSolution2:
         """
         if self.df2 is None or self.df3 is None:
             raise ValueError("Required data not available. Call preprocessing() first.")
-            
-        # Convert to numpy arrays and reshape
         df2_array = self.df2.to_numpy().reshape(-1, 1)
         df3_array = self.df3.to_numpy().reshape(-1, 1)
-        
-        # Ensure both arrays have the same length
         min_length = min(len(df2_array), len(df3_array))
         df2_array = df2_array[:min_length]
         df3_array = df3_array[:min_length]
-        
-        # Output sequence (could be any derived value)
         output_seq = (df2_array + df3_array).reshape(-1, 1)
-        
-        # Stack horizontally to create multivariate dataset [feature1, feature2, output]
         self.dataset = np.hstack([df2_array, df3_array, output_seq])
-        
         return self
 
     @staticmethod
     def split_multivariate_sequence(sequence, n_steps):
         """
-        Split a multivariate sequence into samples.
+        Splits a multivariate sequence into samples.
         
-        Parameters:
-        sequence : numpy.ndarray
-            The multivariate sequence.
-        n_steps : int
-            The window size.
-            
         Returns:
-        tuple
-            X (input sequences) and y (target values).
+        X : numpy.ndarray
+            Input features.
+        y : numpy.ndarray
+            Output values.
         """
         X, y = [], []
         for i in range(len(sequence)):
@@ -544,359 +891,97 @@ class PatricioSolution2:
             y.append(seq_y)
         return np.array(X), np.array(y)
 
-    def multivariate_cnn(self):
-        """
-        Build and train a multivariate CNN model.
-        
-        Returns:
-        self : PatricioSolution2
-            Returns the instance for method chaining.
-        """
-        if self.dataset is None:
-            self.multivariate_cnn_preprocess()
-            
-        # Split the dataset
-        X, y = self.split_multivariate_sequence(self.dataset, self.n_steps)
-        
-        n_features = X.shape[2]
-        
-        mcnn = Sequential()
-        mcnn.add(keras.layers.Input(shape=(self.n_steps, n_features)))
-        mcnn.add(Conv1D(64, 2, activation='relu'))
-        mcnn.add(MaxPooling1D())
-        mcnn.add(Flatten())
-        mcnn.add(Dense(50, activation='relu'))
-        mcnn.add(Dense(1))
-        mcnn.compile(optimizer='adam', loss='mse')
-        
-        history_mcnn = mcnn.fit(X, y, epochs=1000, verbose=0)
-        pd.DataFrame(history_mcnn.history).plot(title='Multivariate CNN Training Loss')
-        plt.grid(True)
-        plt.show()
-
-        self.mcnn = mcnn
-        self.history_mcnn = history_mcnn
-        
-        # Store data for evaluation
-        self.X = X
-        self.y = y
-        
-        # Evaluate the model
-        self.evaluate(model=self.mcnn)
-
-        return self
-
-    def multiple_header(self):
-        """
-        Build and train a multiple header CNN model.
-        
-        Returns:
-        self : PatricioSolution2
-            Returns the instance for method chaining.
-        """
-        if self.dataset is None:
-            self.multivariate_cnn_preprocess()
-            
-        # Split dataset and prepare data for multiple header model
-        X, y = self.split_multivariate_sequence(self.dataset, self.n_steps)
-        
-        n_steps = X.shape[1]
-        n_features = X.shape[2]
-
-        self.n_steps = n_steps
-        self.n_features = n_features
-
-        # Define the model with two separate inputs
-        model_input1 = Input(shape=(n_steps, 1))
-        cnn1 = Conv1D(64, 2, activation='relu')(model_input1)
-        cnn1 = MaxPooling1D()(cnn1)
-        cnn1 = Flatten()(cnn1)
-
-        model_input2 = Input(shape=(n_steps, 1))
-        cnn2 = Conv1D(64, 2, activation='relu')(model_input2)
-        cnn2 = MaxPooling1D()(cnn2)
-        cnn2 = Flatten()(cnn2)
-
-        # Merge the processed inputs
-        final_model = concatenate([cnn1, cnn2])
-        dense = Dense(50, activation='relu')(final_model)
-        output = Dense(1)(dense)
-
-        # Create the model
-        from tensorflow.keras.models import Model
-        mhcnn = Model(inputs=[model_input1, model_input2], outputs=output)
-        mhcnn.compile(optimizer='adam', loss='mse')
-
-        self.mhcnn = mhcnn
-        
-        # Prepare the data for the model inputs
-        X1 = X[:, :, 0].reshape(X.shape[0], X.shape[1], 1)  
-        X2 = X[:, :, 1].reshape(X.shape[0], X.shape[1], 1)  
-        
-        # Train the model
-        history_mhcnn = self.mhcnn.fit([X1, X2], y, epochs=1000, verbose=0)
-        pd.DataFrame(history_mhcnn.history).plot(title='Multiple Header CNN Training Loss')
-        plt.grid(True)
-        plt.show()
-
-        self.history_mhcnn = history_mhcnn
-        
-        # Store data for evaluation
-        self.X = X
-        self.y = y
-        
-        # Evaluate the model
-        loss = self.mhcnn.evaluate([X1, X2], y)
-        print(f'Loss: {loss:.4f}')
-
-        return self
-
     @staticmethod
     def split_multiple_forecasting_sequence(sequence, n_steps):
         """
-        Split a sequence for multiple forecasting.
+        Splits a sequence for multiple-step forecasting.
         
-        Parameters:
-        sequence : numpy.ndarray
-            The multivariate sequence.
-        n_steps : int
-            The window size.
-            
         Returns:
-        tuple
-            X (input sequences) and y (target sequences).
+        X : numpy.ndarray
+            Input features.
+        y : numpy.ndarray
+            Output values.
         """
         X, y = [], []
         for i in range(len(sequence)):
             end_ix = i + n_steps
-            
             if end_ix > len(sequence) - 1:
                 break
-            # Input is the window, output is the next value for all features
             seq_x, seq_y = sequence[i:end_ix, :], sequence[end_ix, :]
             X.append(seq_x)
             y.append(seq_y)
-
         return np.array(X), np.array(y)
-
-    def multiple_parallel(self):
-        """
-        Build and train a multiple parallel CNN model.
-        
-        Returns:
-        self : PatricioSolution2
-            Returns the instance for method chaining.
-        """
-        if self.dataset is None:
-            self.multivariate_cnn_preprocess()
-            
-        # Split the dataset
-        X_m, y_m = self.split_multiple_forecasting_sequence(self.dataset, n_steps=4)
-        
-        self.X_m = X_m
-        self.y_m = y_m
-        
-        n_features = X_m.shape[2]
-
-        mpcnn = Sequential()
-        mpcnn.add(keras.layers.Input(shape=(self.n_steps, n_features)))
-        mpcnn.add(Conv1D(64, 2, activation='relu'))
-        mpcnn.add(MaxPooling1D())
-        mpcnn.add(Flatten())
-        mpcnn.add(Dense(50, activation='relu'))
-        mpcnn.add(Dense(n_features))  # Output for all features
-        mpcnn.compile(optimizer='adam', loss='mse')
-
-        history_mpcnn = mpcnn.fit(X_m, y_m, epochs=1000, verbose=0)
-        pd.DataFrame(history_mpcnn.history).plot(title='Multiple Parallel CNN Training Loss')
-        plt.grid(True)
-        plt.show()
-
-        self.mpcnn = mpcnn
-        self.history_mpcnn = history_mpcnn
-
-        # Evaluate the model
-        loss = self.mpcnn.evaluate(X_m, y_m)
-        print(f'Loss: {loss:.4f}')
-
-        return self
-
-    def multi_output_cnn(self):
-        """
-        Build and train a multi-output CNN model.
-        
-        Returns:
-        self : PatricioSolution2
-            Returns the instance for method chaining.
-        """
-        if self.X_m is None or self.y_m is None:
-            if self.dataset is None:
-                self.multivariate_cnn_preprocess()
-            self.X_m, self.y_m = self.split_multiple_forecasting_sequence(self.dataset, n_steps=4)
-            
-        n_features = self.X_m.shape[2]
-
-        # Define the model
-        from tensorflow.keras.models import Model
-        visible = Input(shape=(self.n_steps, n_features))
-        cnn = Conv1D(64, 2, activation='relu')(visible)
-        cnn = MaxPooling1D()(cnn)
-        cnn = Flatten()(cnn)
-        cnn = Dense(50, activation='relu')(cnn)
-
-        # Separate output for each feature
-        output1 = Dense(1)(cnn)
-        output2 = Dense(1)(cnn)
-        output3 = Dense(1)(cnn)
-        
-        # Create the model
-        mocnn = Model(inputs=visible, outputs=[output1, output2, output3])
-        mocnn.compile(optimizer='adam', loss='mse')
-
-        # Prepare target outputs
-        y1 = self.y_m[:, 0].reshape((self.y_m.shape[0], 1))
-        y2 = self.y_m[:, 1].reshape((self.y_m.shape[0], 1))
-        y3 = self.y_m[:, 2].reshape((self.y_m.shape[0], 1))
-
-        # Train the model
-        history_mocnn = mocnn.fit(self.X_m, [y1, y2, y3], epochs=1000, verbose=0)
-        pd.DataFrame(history_mocnn.history).plot(title='Multi-Output CNN Training Loss')
-        plt.grid(True)
-        plt.show()
-
-        self.mocnn = mocnn
-        self.history_mocnn = history_mocnn
-
-        # Evaluate the model
-        loss = self.mocnn.evaluate(self.X_m, [y1, y2, y3])
-        print(f'Loss: {loss}')
-
-        return self
 
     @staticmethod
     def split_univariate_sequence_m_step(sequence, n_steps_in, n_steps_out):
         """
-        Split a univariate sequence into samples with multiple output steps.
+        Splits a univariate sequence into samples with multiple output steps.
         
-        Parameters:
-        sequence : array-like
-            The input time series data.
-        n_steps_in : int
-            The input window size.
-        n_steps_out : int
-            The output window size.
-            
         Returns:
-        tuple
-            X (input sequences) and y (output sequences).
+        X : numpy.ndarray
+            Input features.
+        y : numpy.ndarray
+            Output values.
         """
         X, y = [], []
         for i in range(len(sequence)):
             end_ix = i + n_steps_in
             out_end_ix = end_ix + n_steps_out
-            
             if out_end_ix > len(sequence):
                 break
-                
             if isinstance(sequence, pd.Series):
                 seq_x = sequence.iloc[i:end_ix].values
                 seq_y = sequence.iloc[end_ix:out_end_ix].values
             else:
                 seq_x = sequence[i:end_ix]
                 seq_y = sequence[end_ix:out_end_ix]
-                
             X.append(seq_x)
             y.append(seq_y)
-            
         return np.array(X), np.array(y)
-
-    def multiple_steps_cnn(self):
-        """
-        Build and train a multiple steps CNN model.
-        
-        Returns:
-        self : PatricioSolution2
-            Returns the instance for method chaining.
-        """
-        if self.df2 is None:
-            raise ValueError("Data not preprocessed. Call preprocessing() first.")
-            
-        # Split data for multiple step prediction
-        X, y = self.split_univariate_sequence_m_step(self.df2, 4, 2)
-        
-        # Display a few examples
-        for i in range(min(3, len(X))):
-            print(f"Input {i}: {X[i]}, Output {i}: {y[i]}")
-        
-        # Reshape for CNN
-        X = X.reshape((X.shape[0], X.shape[1], 1))
-        
-        # Build the model
-        mscnn = Sequential()
-        mscnn.add(keras.layers.Input(shape=(4, 1)))
-        mscnn.add(Conv1D(64, 2, activation='relu'))
-        mscnn.add(MaxPooling1D())
-        mscnn.add(Flatten())
-        mscnn.add(Dense(50, activation='relu'))
-        mscnn.add(Dense(2))  # Output 2 future values
-        mscnn.compile(optimizer='adam', loss='mse')
-
-        # Train the model
-        history_mscnn = mscnn.fit(X, y, epochs=1000, verbose=0)
-        pd.DataFrame(history_mscnn.history).plot(title='Multiple Steps CNN Training Loss')
-        plt.grid(True)
-        plt.show()
-
-        self.mscnn = mscnn
-        self.history_mscnn = history_mscnn
-
-        # Evaluate the model
-        loss = self.mscnn.evaluate(X, y)
-        print(f'Loss: {loss:.4f}')
-
-        return self
 
     def execute_activity_two(self, path):
         """
-        Execute all models for activity two.
+        Execute all models (12 in total) for activity two.
         
         Parameters:
         path : str
-            The path to the directory containing CSV files.
-            
+            Path to the dataset.
+        
         Returns:
         self : PatricioSolution2
             Returns the instance for method chaining.
         """
         print("Starting preprocessing...")
         self.preprocessing(path)
-        
         print("Setting up features...")
         self.set_features(n_steps=4, n_features=1)
-        
-        print("Training univariate CNN model...")
+        print("Training Univariate CNN model...")
         self.univariate_cnn()
-        
-        print("Preprocessing data for multivariate analysis...")
-        self.multivariate_cnn_preprocess()
-        
-        print("Training multivariate CNN model...")
+        print("Training Multivariate CNN model...")
         self.multivariate_cnn()
-        
-        print("Training multiple header CNN model...")
+        print("Training Multiple Header CNN model...")
         self.multiple_header()
-        
-        print("Training multiple parallel CNN model...")
+        print("Training Multiple Parallel CNN model...")
         self.multiple_parallel()
-        
-        print("Training multi-output CNN model...")
+        print("Training Multi-Output CNN model...")
         self.multi_output_cnn()
-        
-        print("Training multiple steps CNN model...")
+        print("Training Multiple Steps CNN model...")
         self.multiple_steps_cnn()
-        
+        print("Training Univariate CNN with Dropout model...")
+        self.univariate_cnn_dropout()
+        print("Training Univariate CNN with Bidirectional LSTM model...")
+        self.univariate_cnn_bidirectional()
+        print("Training Univariate LSTM model...")
+        self.univariate_lstm()
+        print("Training Univariate Dense model...")
+        self.univariate_dense()
+        print("Training Stacked Univariate CNN model...")
+        self.univariate_cnn_stack()
+        print("Training Ensemble Univariate CNN model...")
+        self.univariate_cnn_ensemble()
         print("All models completed!")
         return self
+
 
 if __name__ == '__main__':
     print("Activity 1 main execution")
